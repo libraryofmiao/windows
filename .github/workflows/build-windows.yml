@@ -29,13 +29,13 @@ jobs:
           $xaml = Join-Path $env:PROJECT_DIR "MainWindow.xaml"
           if (Test-Path $xaml) {
             $text = Get-Content $xaml -Raw
-            $text = [regex]::Replace($text, 'NewWindowRequested\s*=\s*"[^"]*"', '')
+            $text = [regex]::Replace($text, '(NewWindowRequested|DownloadStarting)\s*=\s*"[^"]*"', '')
             Set-Content -Path $xaml -Value $text -Encoding utf8NoBOM
           }
           $cs = Join-Path $env:PROJECT_DIR "MainWindow.xaml.cs"
           if (Test-Path $cs) {
             $lines = Get-Content $cs
-            $lines = $lines | Where-Object { $_ -notmatch 'NewWindowRequested' }
+            $lines = $lines | Where-Object { $_ -notmatch '(NewWindowRequested|DownloadStarting)' }
             Set-Content -Path $cs -Value $lines -Encoding utf8NoBOM
           }
       - name: Patch project for CI packaging
