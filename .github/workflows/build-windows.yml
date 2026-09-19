@@ -34,9 +34,11 @@ jobs:
           }
           $cs = Join-Path $env:PROJECT_DIR "MainWindow.xaml.cs"
           if (Test-Path $cs) {
-            $lines = Get-Content $cs
-            $lines = $lines | Where-Object { $_ -notmatch '(NewWindowRequested|DownloadStarting)' }
-            Set-Content -Path $cs -Value $lines -Encoding utf8NoBOM
+            $text = Get-Content $cs -Raw
+            $text = [regex]::Replace($text, '(?s)\s*private void CoreWebView2_NewWindowRequested\s*\(.*?\n\s*\}\s*', [Environment]::NewLine)
+            $text = [regex]::Replace($text, '(?s)\s*private void CoreWebView2_DownloadStarting\s*\(.*?\n\s*\}\s*', [Environment]::NewLine)
+            $text = [regex]::Replace($text, '(?s)\s*private void KohaBrowser_DownloadStarting\s*\(.*?\n\s*\}\s*', [Environment]::NewLine)
+            Set-Content -Path $cs -Value $text -Encoding utf8NoBOM
           }
       - name: Patch project for CI packaging
         shell: pwsh
