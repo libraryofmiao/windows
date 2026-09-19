@@ -29,7 +29,7 @@ jobs:
           $xaml = Join-Path $env:PROJECT_DIR "MainWindow.xaml"
           if (Test-Path $xaml) {
             $text = Get-Content $xaml -Raw
-            $text = [regex]::Replace($text, '\\s+NewWindowRequested="[^"]*"', '')
+            $text = [regex]::Replace($text, 'NewWindowRequested\s*=\s*"[^"]*"', '')
             Set-Content -Path $xaml -Value $text -Encoding utf8NoBOM
           }
           $cs = Join-Path $env:PROJECT_DIR "MainWindow.xaml.cs"
