@@ -8,12 +8,10 @@ on:
 jobs:
   build-windows:
     runs-on: windows-latest
-    timeout-minutes: 30
-
+    timeout-minutes: 40
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
       - name: Extract uploaded project ZIP
         shell: pwsh
         run: |
@@ -23,63 +21,79 @@ jobs:
           New-Item -ItemType Directory -Path work | Out-Null
           Expand-Archive -Path $zip.FullName -DestinationPath work -Force
           $project = Get-ChildItem work -Recurse -Filter "MiaoLibraryKohaDesktop.csproj" | Select-Object -First 1
-          if (-not $project) { throw "MiaoLibraryKohaDesktop.csproj was not found after extracting the ZIP." }
+          if (-not $project) { throw "MiaoLibraryKohaDesktop.csproj was not found." }
           "PROJECT_DIR=$($project.Directory.FullName)" | Out-File $env:GITHUB_ENV -Append
-
-      - name: Install .NET 8
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: "8.0.x"
-
+      - name: Patch project for CI packaging
+        shell: pwsh
+        run: |
+          $csproj = Join-Path $env:PROJECT_DIR "MiaoLibraryKohaDesktop.csproj"
+          [xml]$xml = Get-Content $csproj
+          $pkg = $xml.Project.ItemGroup.PackageReference | Where-Object { $_.Include -eq "Microsoft.Web.WebView2" }
+          if ($pkg) { $pkg.Version = "1.0.3967.48" }
+          $itemGroup = @($xml.Project.ItemGroup) | Select-Object -First 1
+          $asset = @($xml.Project.ItemGroup.Content) | Where-Object { $_.Include -eq "Assets\*.png" }
+          if (-not $asset) {
+            $content = $xml.CreateElement("Content")
+            $content.SetAttribute("Include", "Assets\*.png")
+            $copyOut = $xml.CreateElement("CopyToOutputDirectory"); $copyOut.InnerText = "PreserveNewest"
+            $copyPub = $xml.CreateElement("CopyToPublishDirectory"); $copyPub.InnerText = "PreserveNewest"
+            $content.AppendChild($copyOut) | Out-Null
+            $content.AppendChild($copyPub) | Out-Null
+            $itemGroup.AppendChild($content) | Out-Null
+          }
+          $xml.Save($csproj)
       - name: Prepare bundled WebView2 Fixed Runtime
         shell: pwsh
         run: |
           $fixed = Join-Path $env:PROJECT_DIR "FixedRuntime"
           $exe = Join-Path $fixed "msedgewebview2.exe"
           if (-not (Test-Path $exe)) {
-            Write-Host "Bundled FixedRuntime is not present. Obtaining the current x64 fixed runtime package for the build."
+            $version = "151.0.4129.78"
             $pkg = Join-Path $env:RUNNER_TEMP "webview2-runtime.nupkg"
-            Invoke-WebRequest -Uri "https://api.nuget.org/v3-flatcontainer/webview2.runtime.x64/153.0.4234.32/webview2.runtime.x64.153.0.4234.32.nupkg" -OutFile $pkg
+            $url = "https://api.nuget.org/v3-flatcontainer/webview2.runtime.x64/$version/webview2.runtime.x64.$version.nupkg"
+            Invoke-WebRequest -Uri $url -OutFile $pkg
             $extract = Join-Path $env:RUNNER_TEMP "webview2-runtime"
             Remove-Item -Recurse -Force $extract -ErrorAction SilentlyContinue
             New-Item -ItemType Directory -Path $extract | Out-Null
             Expand-Archive -Path $pkg -DestinationPath $extract -Force
             $runtimeExe = Get-ChildItem $extract -Recurse -Filter "msedgewebview2.exe" | Select-Object -First 1
-            if (-not $runtimeExe) { throw "Fixed WebView2 runtime executable was not found in the runtime package." }
-            New-Item -ItemType Directory -Path $fixed -Force | Out-Null
+            if (-not $runtimeExe) { throw "msedgewebview2.exe was not found." }
+            Remove-Item -Recurse -Force $fixed -ErrorAction SilentlyContinue
+            New-Item -ItemType Directory -Path $fixed | Out-Null
             Copy-Item (Join-Path $runtimeExe.Directory.FullName "*") $fixed -Recurse -Force
           }
           if (-not (Test-Path $exe)) { throw "FixedRuntime preparation failed." }
-
       - name: Restore
         working-directory: ${{ env.PROJECT_DIR }}
         run: dotnet restore .\MiaoLibraryKohaDesktop.csproj
-
       - name: Publish self-contained Windows x64
         working-directory: ${{ env.PROJECT_DIR }}
-        run: >
-          dotnet publish .\MiaoLibraryKohaDesktop.csproj
-          -c Release -r win-x64 --self-contained true
-          -p:PublishTrimmed=false
-          -o .\publish
-
+        run: dotnet publish .\MiaoLibraryKohaDesktop.csproj -c Release -r win-x64 --self-contained true -p:PublishTrimmed=false -o .\publish
+      - name: Verify published files
+        shell: pwsh
+        run: |
+          $publish = Join-Path $env:PROJECT_DIR "publish"
+          if (-not (Test-Path (Join-Path $publish "MiaoLibraryKohaDesktop.exe"))) { throw "EXE missing." }
+          if (-not (Test-Path (Join-Path $publish "FixedRuntime\msedgewebview2.exe"))) { throw "WebView2 runtime missing." }
+          if (-not (Test-Path (Join-Path $publish "Assets\MiaoLibraryBrand.png"))) { throw "Miao Library logo missing." }
       - name: Install Inno Setup
         shell: pwsh
         run: choco install innosetup --yes --no-progress
-
       - name: Build installer
         working-directory: ${{ env.PROJECT_DIR }}
         shell: pwsh
+        run: '& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" ".\installer\MiaoLibraryKoha.iss"'
+      - name: Verify installer
+        shell: pwsh
         run: |
-          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" ".\installer\MiaoLibraryKoha.iss"
-
+          $installer = Join-Path $env:PROJECT_DIR "artifacts\MiaoLibraryKohaSetup.exe"
+          if (-not (Test-Path $installer)) { throw "Installer was not created." }
       - name: Upload Windows installer
         uses: actions/upload-artifact@v4
         with:
           name: MiaoLibraryKoha-Windows-Installer
           path: ${{ env.PROJECT_DIR }}\artifacts\MiaoLibraryKohaSetup.exe
           if-no-files-found: error
-
       - name: Upload published application
         uses: actions/upload-artifact@v4
         with:
