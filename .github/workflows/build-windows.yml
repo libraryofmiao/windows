@@ -29,16 +29,25 @@ jobs:
           $xaml = Join-Path $env:PROJECT_DIR "MainWindow.xaml"
           if (Test-Path $xaml) {
             $text = Get-Content $xaml -Raw
-            $text = [regex]::Replace($text, '(NewWindowRequested|DownloadStarting)\s*=\s*"[^"]*"', '')
+            $text = $text -replace '(?m)\s*(NewWindowRequested|DownloadStarting)\s*=\s*"[^"]*"', ''
             Set-Content -Path $xaml -Value $text -Encoding utf8NoBOM
           }
           $cs = Join-Path $env:PROJECT_DIR "MainWindow.xaml.cs"
           if (Test-Path $cs) {
             $text = Get-Content $cs -Raw
-            $text = [regex]::Replace($text, '(?m)^\s*(CoreWebView2_NewWindowRequested|CoreWebView2_DownloadStarting)\s*\([^;]*;\s*$', '')
-            $text = [regex]::Replace($text, '(?s)\s*private void CoreWebView2_NewWindowRequested\s*\(.*?\n\s*\}\s*', [Environment]::NewLine)
-            $text = [regex]::Replace($text, '(?s)\s*private void CoreWebView2_DownloadStarting\s*\(.*?\n\s*\}\s*', [Environment]::NewLine)
-            $text = [regex]::Replace($text, '(?s)\s*private void KohaBrowser_DownloadStarting\s*\(.*?\n\s*\}\s*', [Environment]::NewLine)
+            $text = $text -replace '(?m)^.*(CoreWebView2_NewWindowRequested|CoreWebView2_DownloadStarting).*$\r?\n?', ''
+            if ($text -notmatch 'private void Back_Click\s*\(') {
+              $method = @'
+        private void Back_Click(object sender, RoutedEventArgs e)
+        {
+            if (KohaBrowser.CanGoBack)
+                KohaBrowser.GoBack();
+        }
+'@
+              $pos = $text.LastIndexOf("}")
+              if ($pos -lt 0) { throw "Could not locate MainWindow class closing brace." }
+              $text = $text.Insert($pos, $method + [Environment]::NewLine)
+            }
             Set-Content -Path $cs -Value $text -Encoding utf8NoBOM
           }
       - name: Patch project for CI packaging
