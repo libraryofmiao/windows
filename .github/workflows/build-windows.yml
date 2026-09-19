@@ -35,6 +35,7 @@ jobs:
           $cs = Join-Path $env:PROJECT_DIR "MainWindow.xaml.cs"
           if (Test-Path $cs) {
             $text = Get-Content $cs -Raw
+            $text = [regex]::Replace($text, '(?m)^\\s*(CoreWebView2_NewWindowRequested|CoreWebView2_DownloadStarting)\\s*\\([^;]*;\\s*$', '')
             $text = [regex]::Replace($text, '(?s)\s*private void CoreWebView2_NewWindowRequested\s*\(.*?\n\s*\}\s*', [Environment]::NewLine)
             $text = [regex]::Replace($text, '(?s)\s*private void CoreWebView2_DownloadStarting\s*\(.*?\n\s*\}\s*', [Environment]::NewLine)
             $text = [regex]::Replace($text, '(?s)\s*private void KohaBrowser_DownloadStarting\s*\(.*?\n\s*\}\s*', [Environment]::NewLine)
