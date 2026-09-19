@@ -35,8 +35,10 @@ jobs:
           # WPF WebView2 does not expose these CoreWebView2 events as XAML events.
           # Remove every stale XAML hookup and every C# reference to the removed handlers.
           $xamlText = Get-Content $xaml -Raw
-          $xamlText = [regex]::Replace($xamlText, '(?m)^.*(?:NewWindowRequested|DownloadStarting).*\r?\n?', '')
+          # Remove only the offending XAML attributes, preserving the element line.
+          $xamlText = [regex]::Replace($xamlText, '\s+(?:NewWindowRequested|DownloadStarting)\s*=\s*"[^"]*"', '')
           Set-Content -Path $xaml -Value $xamlText -Encoding utf8NoBOM
+          [xml]$null = Get-Content $xaml
 
           $lines = Get-Content $cs
           $lines = $lines | Where-Object {
