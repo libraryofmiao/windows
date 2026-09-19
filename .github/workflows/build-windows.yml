@@ -35,7 +35,180 @@ jobs:
           $cs = Join-Path $env:PROJECT_DIR "MainWindow.xaml.cs"
           if (Test-Path $cs) {
             $text = Get-Content $cs -Raw
-            $text = [regex]::Replace($text, '(?m)^\\s*(CoreWebView2_NewWindowRequested|CoreWebView2_DownloadStarting)\\s*\\([^;]*;\\s*$', '')
+            $text = [regex]::Replace($text, '(?m)^\s*(CoreWebView2\.NewWindowRequested|CoreWebView2\.DownloadStarting)\s*\+=.*;\s*            $text = [regex]::Replace($text, '(?s)\s*private void CoreWebView2_NewWindowRequested\s*\(.*?\n\s*\}\s*', [Environment]::NewLine)
+            $text = [regex]::Replace($text, '(?s)\s*private void CoreWebView2_DownloadStarting\s*\(.*?\n\s*\}\s*', [Environment]::NewLine)
+            $text = [regex]::Replace($text, '(?s)\s*private void KohaBrowser_DownloadStarting\s*\(.*?\n\s*\}\s*', [Environment]::NewLine)
+            Set-Content -Path $cs -Value $text -Encoding utf8NoBOM
+          }
+      - name: Patch project for CI packaging
+        shell: pwsh
+        run: |
+          $csproj = Join-Path $env:PROJECT_DIR "MiaoLibraryKohaDesktop.csproj"
+          [xml]$xml = Get-Content $csproj
+          $pkg = $xml.Project.ItemGroup.PackageReference | Where-Object { $_.Include -eq "Microsoft.Web.WebView2" }
+          if ($pkg) { $pkg.Version = "1.0.3967.48" }
+          $itemGroup = @($xml.Project.ItemGroup) | Select-Object -First 1
+          $asset = @($xml.Project.ItemGroup.Content) | Where-Object { $_.Include -eq "Assets\*.png" }
+          if (-not $asset) {
+            $content = $xml.CreateElement("Content")
+            $content.SetAttribute("Include", "Assets\*.png")
+            $copyOut = $xml.CreateElement("CopyToOutputDirectory"); $copyOut.InnerText = "PreserveNewest"
+            $copyPub = $xml.CreateElement("CopyToPublishDirectory"); $copyPub.InnerText = "PreserveNewest"
+            $content.AppendChild($copyOut) | Out-Null
+            $content.AppendChild($copyPub) | Out-Null
+            $itemGroup.AppendChild($content) | Out-Null
+          }
+          $xml.Save($csproj)
+      - name: Prepare bundled WebView2 Fixed Runtime
+        shell: pwsh
+        run: |
+          $fixed = Join-Path $env:PROJECT_DIR "FixedRuntime"
+          $exe = Join-Path $fixed "msedgewebview2.exe"
+          if (-not (Test-Path $exe)) {
+            $version = "151.0.4129.78"
+            $pkg = Join-Path $env:RUNNER_TEMP "webview2-runtime.nupkg"
+            $url = "https://api.nuget.org/v3-flatcontainer/webview2.runtime.x64/$version/webview2.runtime.x64.$version.nupkg"
+            Invoke-WebRequest -Uri $url -OutFile $pkg
+            $extract = Join-Path $env:RUNNER_TEMP "webview2-runtime"
+            Remove-Item -Recurse -Force $extract -ErrorAction SilentlyContinue
+            New-Item -ItemType Directory -Path $extract | Out-Null
+            Expand-Archive -Path $pkg -DestinationPath $extract -Force
+            $runtimeExe = Get-ChildItem $extract -Recurse -Filter "msedgewebview2.exe" | Select-Object -First 1
+            if (-not $runtimeExe) { throw "msedgewebview2.exe was not found." }
+            Remove-Item -Recurse -Force $fixed -ErrorAction SilentlyContinue
+            New-Item -ItemType Directory -Path $fixed | Out-Null
+            Copy-Item (Join-Path $runtimeExe.Directory.FullName "*") $fixed -Recurse -Force
+          }
+          if (-not (Test-Path $exe)) { throw "FixedRuntime preparation failed." }
+      - name: Restore
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: dotnet restore .\MiaoLibraryKohaDesktop.csproj
+      - name: Publish self-contained Windows x64
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: dotnet publish .\MiaoLibraryKohaDesktop.csproj -c Release -r win-x64 --self-contained true -p:PublishTrimmed=false -o .\publish
+      - name: Verify published files
+        shell: pwsh
+        run: |
+          $publish = Join-Path $env:PROJECT_DIR "publish"
+          if (-not (Test-Path (Join-Path $publish "MiaoLibraryKohaDesktop.exe"))) { throw "EXE missing." }
+          if (-not (Test-Path (Join-Path $publish "FixedRuntime\msedgewebview2.exe"))) { throw "WebView2 runtime missing." }
+          if (-not (Test-Path (Join-Path $publish "Assets\MiaoLibraryBrand.png"))) { throw "Miao Library logo missing." }
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --yes --no-progress
+      - name: Build installer
+        working-directory: ${{ env.PROJECT_DIR }}
+        shell: pwsh
+        run: '& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" ".\installer\MiaoLibraryKoha.iss"'
+      - name: Verify installer
+        shell: pwsh
+        run: |
+          $installer = Join-Path $env:PROJECT_DIR "artifacts\MiaoLibraryKohaSetup.exe"
+          if (-not (Test-Path $installer)) { throw "Installer was not created." }
+      - name: Upload Windows installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: MiaoLibraryKoha-Windows-Installer
+          path: ${{ env.PROJECT_DIR }}\artifacts\MiaoLibraryKohaSetup.exe
+          if-no-files-found: error
+      - name: Upload published application
+        uses: actions/upload-artifact@v4
+        with:
+          name: MiaoLibraryKoha-Windows-Publish
+          path: ${{ env.PROJECT_DIR }}\publish
+          if-no-files-found: error, '')
+            if ($text -notmatch 'private void Back_Click\s*\(') {
+              $method = @'
+
+        private void Back_Click(object sender, RoutedEventArgs e)
+        {
+            if (KohaBrowser.CanGoBack)
+                KohaBrowser.GoBack();
+        }
+'@
+              $text = $text -replace '(\n\s*}\s*)            $text = [regex]::Replace($text, '(?s)\s*private void CoreWebView2_NewWindowRequested\s*\(.*?\n\s*\}\s*', [Environment]::NewLine)
+            $text = [regex]::Replace($text, '(?s)\s*private void CoreWebView2_DownloadStarting\s*\(.*?\n\s*\}\s*', [Environment]::NewLine)
+            $text = [regex]::Replace($text, '(?s)\s*private void KohaBrowser_DownloadStarting\s*\(.*?\n\s*\}\s*', [Environment]::NewLine)
+            Set-Content -Path $cs -Value $text -Encoding utf8NoBOM
+          }
+      - name: Patch project for CI packaging
+        shell: pwsh
+        run: |
+          $csproj = Join-Path $env:PROJECT_DIR "MiaoLibraryKohaDesktop.csproj"
+          [xml]$xml = Get-Content $csproj
+          $pkg = $xml.Project.ItemGroup.PackageReference | Where-Object { $_.Include -eq "Microsoft.Web.WebView2" }
+          if ($pkg) { $pkg.Version = "1.0.3967.48" }
+          $itemGroup = @($xml.Project.ItemGroup) | Select-Object -First 1
+          $asset = @($xml.Project.ItemGroup.Content) | Where-Object { $_.Include -eq "Assets\*.png" }
+          if (-not $asset) {
+            $content = $xml.CreateElement("Content")
+            $content.SetAttribute("Include", "Assets\*.png")
+            $copyOut = $xml.CreateElement("CopyToOutputDirectory"); $copyOut.InnerText = "PreserveNewest"
+            $copyPub = $xml.CreateElement("CopyToPublishDirectory"); $copyPub.InnerText = "PreserveNewest"
+            $content.AppendChild($copyOut) | Out-Null
+            $content.AppendChild($copyPub) | Out-Null
+            $itemGroup.AppendChild($content) | Out-Null
+          }
+          $xml.Save($csproj)
+      - name: Prepare bundled WebView2 Fixed Runtime
+        shell: pwsh
+        run: |
+          $fixed = Join-Path $env:PROJECT_DIR "FixedRuntime"
+          $exe = Join-Path $fixed "msedgewebview2.exe"
+          if (-not (Test-Path $exe)) {
+            $version = "151.0.4129.78"
+            $pkg = Join-Path $env:RUNNER_TEMP "webview2-runtime.nupkg"
+            $url = "https://api.nuget.org/v3-flatcontainer/webview2.runtime.x64/$version/webview2.runtime.x64.$version.nupkg"
+            Invoke-WebRequest -Uri $url -OutFile $pkg
+            $extract = Join-Path $env:RUNNER_TEMP "webview2-runtime"
+            Remove-Item -Recurse -Force $extract -ErrorAction SilentlyContinue
+            New-Item -ItemType Directory -Path $extract | Out-Null
+            Expand-Archive -Path $pkg -DestinationPath $extract -Force
+            $runtimeExe = Get-ChildItem $extract -Recurse -Filter "msedgewebview2.exe" | Select-Object -First 1
+            if (-not $runtimeExe) { throw "msedgewebview2.exe was not found." }
+            Remove-Item -Recurse -Force $fixed -ErrorAction SilentlyContinue
+            New-Item -ItemType Directory -Path $fixed | Out-Null
+            Copy-Item (Join-Path $runtimeExe.Directory.FullName "*") $fixed -Recurse -Force
+          }
+          if (-not (Test-Path $exe)) { throw "FixedRuntime preparation failed." }
+      - name: Restore
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: dotnet restore .\MiaoLibraryKohaDesktop.csproj
+      - name: Publish self-contained Windows x64
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: dotnet publish .\MiaoLibraryKohaDesktop.csproj -c Release -r win-x64 --self-contained true -p:PublishTrimmed=false -o .\publish
+      - name: Verify published files
+        shell: pwsh
+        run: |
+          $publish = Join-Path $env:PROJECT_DIR "publish"
+          if (-not (Test-Path (Join-Path $publish "MiaoLibraryKohaDesktop.exe"))) { throw "EXE missing." }
+          if (-not (Test-Path (Join-Path $publish "FixedRuntime\msedgewebview2.exe"))) { throw "WebView2 runtime missing." }
+          if (-not (Test-Path (Join-Path $publish "Assets\MiaoLibraryBrand.png"))) { throw "Miao Library logo missing." }
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --yes --no-progress
+      - name: Build installer
+        working-directory: ${{ env.PROJECT_DIR }}
+        shell: pwsh
+        run: '& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" ".\installer\MiaoLibraryKoha.iss"'
+      - name: Verify installer
+        shell: pwsh
+        run: |
+          $installer = Join-Path $env:PROJECT_DIR "artifacts\MiaoLibraryKohaSetup.exe"
+          if (-not (Test-Path $installer)) { throw "Installer was not created." }
+      - name: Upload Windows installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: MiaoLibraryKoha-Windows-Installer
+          path: ${{ env.PROJECT_DIR }}\artifacts\MiaoLibraryKohaSetup.exe
+          if-no-files-found: error
+      - name: Upload published application
+        uses: actions/upload-artifact@v4
+        with:
+          name: MiaoLibraryKoha-Windows-Publish
+          path: ${{ env.PROJECT_DIR }}\publish
+          if-no-files-found: error, "$method`n`$1"
+            }
             $text = [regex]::Replace($text, '(?s)\s*private void CoreWebView2_NewWindowRequested\s*\(.*?\n\s*\}\s*', [Environment]::NewLine)
             $text = [regex]::Replace($text, '(?s)\s*private void CoreWebView2_DownloadStarting\s*\(.*?\n\s*\}\s*', [Environment]::NewLine)
             $text = [regex]::Replace($text, '(?s)\s*private void KohaBrowser_DownloadStarting\s*\(.*?\n\s*\}\s*', [Environment]::NewLine)
