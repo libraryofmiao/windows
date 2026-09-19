@@ -27,29 +27,57 @@ jobs:
         shell: pwsh
         run: |
           $xaml = Join-Path $env:PROJECT_DIR "MainWindow.xaml"
-          if (Test-Path $xaml) {
-            $text = Get-Content $xaml -Raw
-            $text = $text -replace '(?m)\s*(NewWindowRequested|DownloadStarting)\s*=\s*"[^"]*"', ''
-            Set-Content -Path $xaml -Value $text -Encoding utf8NoBOM
-          }
           $cs = Join-Path $env:PROJECT_DIR "MainWindow.xaml.cs"
-          if (Test-Path $cs) {
-            $text = Get-Content $cs -Raw
-            $text = $text -replace '(?m)^.*(CoreWebView2_NewWindowRequested|CoreWebView2_DownloadStarting).*$\r?\n?', ''
-            if ($text -notmatch 'private void Back_Click\s*\(') {
-              $method = @'
-        private void Back_Click(object sender, RoutedEventArgs e)
-        {
-            if (KohaBrowser.CanGoBack)
-                KohaBrowser.GoBack();
-        }
-'@
-              $pos = $text.LastIndexOf("}")
-              if ($pos -lt 0) { throw "Could not locate MainWindow class closing brace." }
-              $text = $text.Insert($pos, $method + [Environment]::NewLine)
-            }
-            Set-Content -Path $cs -Value $text -Encoding utf8NoBOM
+
+          if (-not (Test-Path $xaml)) { throw "MainWindow.xaml not found." }
+          if (-not (Test-Path $cs)) { throw "MainWindow.xaml.cs not found." }
+
+          # WPF WebView2 does not expose these CoreWebView2 events as XAML events.
+          # Remove every stale XAML hookup and every C# reference to the removed handlers.
+          $xamlText = Get-Content $xaml -Raw
+          $xamlText = [regex]::Replace($xamlText, '(?m)^.*(?:NewWindowRequested|DownloadStarting).*\r?\n?', '')
+          Set-Content -Path $xaml -Value $xamlText -Encoding utf8NoBOM
+
+          $lines = Get-Content $cs
+          $lines = $lines | Where-Object {
+            $_ -notmatch 'CoreWebView2_NewWindowRequested' -and
+            $_ -notmatch 'CoreWebView2_DownloadStarting' -and
+            $_ -notmatch '\.NewWindowRequested\s*\+=' -and
+            $_ -notmatch '\.DownloadStarting\s*\+='
           }
+          Set-Content -Path $cs -Value ($lines -join [Environment]::NewLine) -Encoding utf8NoBOM
+
+          # Add the Back_Click handler as a separate partial-class file.
+          # This avoids fragile brace/regex insertion into the original source.
+          $xamlAfter = Get-Content $xaml -Raw
+          $classMatch = [regex]::Match($xamlAfter, 'x:Class="([^"]+)"')
+          if (-not $classMatch.Success) { throw "Could not determine WPF x:Class." }
+          $fullClass = $classMatch.Groups[1].Value
+          $lastDot = $fullClass.LastIndexOf('.')
+          if ($lastDot -lt 1) { throw "Unexpected x:Class: $fullClass" }
+          $ns = $fullClass.Substring(0, $lastDot)
+          $className = $fullClass.Substring($lastDot + 1)
+
+          $compat = Join-Path $env:PROJECT_DIR "BuildCompatibility.cs"
+          @"
+          namespace $ns;
+
+          public partial class $className
+          {
+              private void Back_Click(object sender, System.Windows.RoutedEventArgs e)
+              {
+                  if (KohaBrowser.CanGoBack)
+                      KohaBrowser.GoBack();
+              }
+          }
+          "@ | Set-Content -Path $compat -Encoding utf8NoBOM
+
+          # Fail immediately if the removed handler names still exist anywhere.
+          $remainingCs = Get-Content $cs -Raw
+          if ($remainingCs -match 'CoreWebView2_NewWindowRequested|CoreWebView2_DownloadStarting') {
+            throw "Stale WebView2 handler reference remains in MainWindow.xaml.cs."
+          }
+
       - name: Patch project for CI packaging
         shell: pwsh
         run: |
