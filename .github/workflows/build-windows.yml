@@ -23,6 +23,21 @@ jobs:
           $project = Get-ChildItem work -Recurse -Filter "MiaoLibraryKohaDesktop.csproj" | Select-Object -First 1
           if (-not $project) { throw "MiaoLibraryKohaDesktop.csproj was not found." }
           "PROJECT_DIR=$($project.Directory.FullName)" | Out-File $env:GITHUB_ENV -Append
+      - name: Patch WebView2 event wiring for WPF
+        shell: pwsh
+        run: |
+          $xaml = Join-Path $env:PROJECT_DIR "MainWindow.xaml"
+          if (Test-Path $xaml) {
+            $text = Get-Content $xaml -Raw
+            $text = [regex]::Replace($text, '\\s+NewWindowRequested="[^"]*"', '')
+            Set-Content -Path $xaml -Value $text -Encoding utf8NoBOM
+          }
+          $cs = Join-Path $env:PROJECT_DIR "MainWindow.xaml.cs"
+          if (Test-Path $cs) {
+            $lines = Get-Content $cs
+            $lines = $lines | Where-Object { $_ -notmatch 'NewWindowRequested' }
+            Set-Content -Path $cs -Value $lines -Encoding utf8NoBOM
+          }
       - name: Patch project for CI packaging
         shell: pwsh
         run: |
